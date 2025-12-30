@@ -44,9 +44,6 @@
     .pill .k { font-size: 12px; color: var(--muted); }
     .pill .v { font-size: 18px; font-weight: 800; margin-top: 4px; }
     .status { margin-top: 10px; padding: 10px; border-radius: 12px; border: 1px solid var(--line); background:#0e1730; }
-    .ok { color: var(--ok); }
-    .bad { color: var(--bad); }
-    .warn { color: var(--warn); }
     table { width: 100%; border-collapse: collapse; margin-top: 10px; border-radius: 12px; overflow: hidden; }
     th, td { border-bottom: 1px solid var(--line); padding: 9px 10px; font-size: 12.5px; text-align: left; vertical-align: top; }
     th { color: var(--muted); font-weight: 800; background: rgba(255,255,255,0.02); }
@@ -59,7 +56,9 @@
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     .tableWrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 12px; }
     .matrixCell { cursor: pointer; }
-    button, a, input, select, textarea { touch-action: manipulation; }
+    .legend { display:flex; gap:10px; flex-wrap:wrap; margin-top:8px; }
+    .chip { border:1px solid var(--line); border-radius:999px; padding:4px 10px; font-size:12px; color:var(--muted); background:#0e1730; }
+    .chip b { color: var(--text); }
     @media (max-width: 560px){
       header { padding: 12px; }
       main { padding: 12px; }
@@ -73,7 +72,7 @@
   <h1>Car Scenario Calculator</h1>
   <p>
     Enter dealer numbers (price, fees, tax), then run a matrix across <b>Down Payments × APRs × Terms</b>.
-    Shows OTD, EMI, All-in, and “required price cut” to hit a target EMI.
+    Each cell shows <b>EMI / All-in</b>. Click a cell to select a scenario and see totals + negotiation target.
   </p>
 </header>
 
@@ -133,7 +132,7 @@
         <input id="ins" type="number" step="0.01" inputmode="decimal" value="150" />
       </div>
       <div>
-        <label>Max all-in monthly budget (EMI + ins) ($)</label>
+        <label>Max all-in monthly budget (EMI + insurance) ($)</label>
         <input id="maxAllIn" type="number" step="0.01" inputmode="decimal" value="500" />
       </div>
     </div>
@@ -144,7 +143,7 @@
         <input id="targetEmi" type="number" step="0.01" inputmode="decimal" value="300" />
       </div>
       <div>
-        <label>Max car-only EMI (optional) ($)</label>
+        <label>Max car-only EMI (screening) ($)</label>
         <input id="maxEmi" type="number" step="0.01" inputmode="decimal" value="350" />
       </div>
     </div>
@@ -162,7 +161,7 @@
     </div>
 
     <div style="margin-top:10px;">
-      <label>APRs (%) — e.g., 4.5,5.5,6.5,8.5</label>
+      <label>APRs (%) — e.g., 4.5,5.5,6.5,9.5</label>
       <input id="aprs" value="4.5,5.5,6.5,8.5" />
     </div>
 
@@ -173,7 +172,7 @@
 
     <div class="hint">
       Tax model: tax is applied to <b>(vehicle price + doc fee + other taxable fees)</b>. Registration/DMV and other non-taxable fees are added after tax.
-      If your dealer taxes doc fee differently, adjust “taxable” fields accordingly.
+      If your dealer taxes doc fee differently, move it to “non-taxable fees”.
     </div>
   </section>
 
@@ -183,7 +182,7 @@
 
     <div class="row">
       <div class="pill">
-        <div class="k">Estimated OTD (based on current fees + tax)</div>
+        <div class="k">Estimated OTD (out-the-door)</div>
         <div class="v" id="otd">$0</div>
         <div class="small" id="otdBreakdown"></div>
       </div>
@@ -194,10 +193,18 @@
       </div>
     </div>
 
+    <div class="legend">
+      <div class="chip"><b>Green</b> = within Max EMI & Max all-in</div>
+      <div class="chip"><b>Yellow</b> = EMI OK but all-in too high (insurance pushes it)</div>
+      <div class="chip"><b>Red</b> = all-in too high</div>
+    </div>
+
     <div id="statusBox" class="status small" role="status" aria-live="polite"></div>
 
     <h2 style="margin-top:16px;">Scenario matrix (Down × APR × Term)</h2>
-    <div class="small">Cells show <span class="mono">EMI / All-in</span>. Click any cell to focus details.</div>
+    <div class="small">
+      Each cell shows: <span class="mono">EMI / All-in</span> (All-in = EMI + insurance). Click any cell to select that scenario.
+    </div>
     <div class="tableWrap">
       <table>
         <thead id="matrixHead"></thead>
@@ -205,7 +212,7 @@
       </table>
     </div>
 
-    <h2 style="margin-top:16px;">Focused scenario details</h2>
+    <h2 style="margin-top:16px;">Selected scenario (what the totals below use)</h2>
     <div class="row">
       <div class="pill">
         <div class="k">Selected scenario</div>
@@ -217,6 +224,19 @@
         <div class="v" id="selCut">$0</div>
         <div class="small" id="selCutNote">—</div>
       </div>
+    </div>
+
+    <h2 style="margin-top:16px;">Totals by APR × Term (loan-only)</h2>
+    <div class="small">
+      Cells show: <span class="mono">Loan Total Paid / Interest / Cash Out</span>
+      where <b>Cash Out = Down Payment + Loan Total Paid</b>. Totals exclude insurance.
+    </div>
+    <div class="small" id="totalsNote"></div>
+    <div class="tableWrap">
+      <table>
+        <thead id="totalsHead"></thead>
+        <tbody id="totalsBody"></tbody>
+      </table>
     </div>
 
     <h2 style="margin-top:16px;">Top fits (closest to target)</h2>
@@ -237,30 +257,29 @@
     </div>
 
     <textarea id="summaryText" class="mono" style="margin-top:12px;" readonly></textarea>
-    <div class="hint">“Copy summary” copies the text so you can paste to WhatsApp/Email while negotiating.</div>
+    <div class="hint">“Copy summary” copies the text so you can paste it to WhatsApp/Email while negotiating.</div>
   </section>
 </main>
 
 <script>
   const $ = (id) => document.getElementById(id);
 
+  // Global selection state so totals + details are always consistent
+  let SELECTED = null;
+
   function money(n) {
     if (!isFinite(n)) return "$0";
     return n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
   }
-
   function money2(n) {
     if (!isFinite(n)) return "$0.00";
     return n.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
-
   function num(id) {
     const v = parseFloat($(id).value);
     return isFinite(v) ? v : 0;
   }
-
   function parseList(str, kind) {
-    // kind: "int" or "float"
     return (str || "")
       .split(",")
       .map(s => s.trim())
@@ -269,7 +288,7 @@
       .filter(v => isFinite(v) && v >= 0);
   }
 
-  // Amortization monthly payment
+  // Standard amortization monthly payment
   function monthlyPayment(principal, aprPct, months) {
     const r = (aprPct / 100) / 12;
     if (months <= 0) return 0;
@@ -288,7 +307,7 @@
 
   // Given target EMI, compute max loan principal for apr/term
   function maxLoanForPayment(targetEmi, aprPct, months) {
-    let lo = 0, hi = 250000; // safe bound
+    let lo = 0, hi = 250000;
     for (let i = 0; i < 70; i++) {
       const mid = (lo + hi) / 2;
       const pmt = monthlyPayment(mid, aprPct, months);
@@ -302,11 +321,8 @@
   function maxVehiclePriceForTarget(targetEmi, aprPct, months, down, taxRatePct, docFee, otherTaxable, regFee, otherNonTaxable) {
     const maxLoan = maxLoanForPayment(targetEmi, aprPct, months);
     const maxOtd = maxLoan + down;
-
-    // OTD = (price + docFee + otherTaxable) * (1+tax) + regFee + otherNonTaxable
     const taxMult = 1 + (taxRatePct / 100);
     const maxPrice = ((maxOtd - regFee - otherNonTaxable) / taxMult) - docFee - otherTaxable;
-
     return { maxLoan, maxOtd, maxPrice };
   }
 
@@ -318,15 +334,80 @@
     return "warnCell";
   }
 
+  function renderSelected(price, targetEmi, taxRate, docFee, otherTaxable, regFee, otherNonTaxable) {
+    if (!SELECTED) return;
+
+    $("selScenario").textContent = `${money(SELECTED.down)} down @ ${SELECTED.apr.toFixed(2)}% for ${SELECTED.term} months`;
+    $("selLoan").textContent =
+      `OTD ≈ ${money(SELECTED.otd)} | Financed principal (OTD − down) ≈ ${money(SELECTED.principal)} | EMI ≈ ${money(SELECTED.emi)} | All-in ≈ ${money(SELECTED.allIn)}`;
+
+    $("selCut").textContent = money(SELECTED.neededCut);
+    $("selCutNote").textContent =
+      SELECTED.neededCut > 0
+        ? `To hit target EMI ${money(targetEmi)} for THIS selected scenario, vehicle price must be ~${money(SELECTED.maxPrice)} (before fees/tax inputs).`
+        : `This selected scenario already supports target EMI at the current price & fees.`;
+
+    renderTotals(
+      parseList($("aprs").value, "float"),
+      parseList($("terms").value, "int"),
+      SELECTED.down,
+      SELECTED.otd
+    );
+  }
+
+  // Totals table: based on selected DOWN, with principal = OTD - down
+  function renderTotals(aprs, terms, down, otd) {
+    const head = $("totalsHead");
+    const body = $("totalsBody");
+    const note = $("totalsNote");
+    head.innerHTML = "";
+    body.innerHTML = "";
+
+    const principal = Math.max(0, otd - down);
+
+    // Round to cents (more realistic)
+    const round2 = (x) => Math.round((x + Number.EPSILON) * 100) / 100;
+
+    const hr = document.createElement("tr");
+    hr.innerHTML = `<th>Term</th>` + aprs.map(a => `<th>APR ${a.toFixed(2)}%<br/><span class="small">Paid / Interest / CashOut</span></th>`).join("");
+    head.appendChild(hr);
+
+    note.textContent =
+      `Totals are calculated for the SELECTED down payment ${money(down)}. ` +
+      `Financed principal = OTD ${money(otd)} − down ${money(down)} = ${money(principal)}. ` +
+      `Totals exclude insurance. “CashOut” includes down + loan payments.`;
+
+    for (const term of terms) {
+      const tr = document.createElement("tr");
+      let cells = "";
+
+      for (const apr of aprs) {
+        const emiRaw = monthlyPayment(principal, apr, term);
+        const emi = round2(emiRaw);
+
+        const totalPaid = round2(emi * term); // loan-only paid
+        const totalInterest = round2(Math.max(0, totalPaid - principal));
+        const cashOut = round2(down + totalPaid);
+
+        cells += `<td class="mono">${money2(totalPaid)}<span class="small"> / ${money2(totalInterest)} / ${money2(cashOut)}</span></td>`;
+      }
+
+      tr.innerHTML = `<td class="mono">${term} mo</td>` + cells;
+      body.appendChild(tr);
+    }
+  }
+
   function run() {
     const carName = $("carName").value.trim();
     const vin = $("vin").value.trim();
+
     const price = num("price");
     const taxRate = num("taxRate");
     const docFee = num("docFee");
     const regFee = num("regFee");
     const otherTaxable = num("otherTaxable");
     const otherNonTaxable = num("otherNonTaxable");
+
     const ins = num("ins");
     const maxAllIn = num("maxAllIn");
     const targetEmi = num("targetEmi");
@@ -347,20 +428,19 @@
     $("taxableSubtotal").textContent = money(taxableSubtotal);
     $("taxLine").textContent = `Tax @ ${taxRate.toFixed(2)}% ≈ ${money2(tax)}`;
     $("otdBreakdown").textContent =
-      `OTD = ${money(taxableSubtotal)} + tax ${money2(tax)} + ${money(regFee + otherNonTaxable)}`;
+      `OTD = (Price + taxable fees) ${money(taxableSubtotal)} + tax ${money2(tax)} + non-taxable fees ${money(regFee + otherNonTaxable)}`;
 
-    // Status summary
     $("statusBox").innerHTML =
-      `<div><b>Current deal inputs</b>: Price ${money(price)}, Doc ${money(docFee)}, Reg ${money(regFee)}, Other taxable ${money(otherTaxable)}, Other non-taxable ${money(otherNonTaxable)}, Tax ${taxRate.toFixed(2)}%.</div>
-       <div>Now run scenarios across Down × APR × Term. Green = within max EMI (${money(maxEmi)}) and max all-in (${money(maxAllIn)}).</div>`;
+      `<div><b>OTD breakdown</b>: taxable subtotal = price ${money(price)} + doc ${money(docFee)} + other taxable ${money(otherTaxable)}.</div>
+       <div><b>Financed principal in any scenario</b> = OTD − down payment.</div>
+       <div>Click a matrix cell to select a scenario. The Totals table below will ALWAYS use the selected scenario’s down payment.</div>`;
 
-    // Build matrix header: columns are APR×Term combos
-
-    // Header
+    // Matrix headers
     const head = $("matrixHead");
     head.innerHTML = "";
     const hr1 = document.createElement("tr");
-    hr1.innerHTML = `<th rowspan="2">Down</th><th rowspan="2">Loan Amt<br/><span class="small">(OTD − down)</span></th>` +
+    hr1.innerHTML =
+      `<th rowspan="2">Down</th><th rowspan="2">Financed<br/><span class="small">(OTD − down)</span></th>` +
       aprs.map(apr => `<th colspan="${terms.length}">APR ${apr.toFixed(2)}%</th>`).join("");
     head.appendChild(hr1);
 
@@ -368,44 +448,44 @@
     hr2.innerHTML = aprs.map(() => terms.map(t => `<th>${t} mo</th>`).join("")).join("");
     head.appendChild(hr2);
 
-    // Body
     const body = $("matrixBody");
     body.innerHTML = "";
 
-    const allScenarioRows = []; // for top fits
-    let selected = null;
+    const allScenarioRows = [];
 
     for (const down of downs) {
-      const loanAmt = Math.max(0, otd - down);
+      const principal = Math.max(0, otd - down);
       const tr = document.createElement("tr");
 
       const leftCells = `
         <td class="mono">${money(down)}</td>
-        <td class="mono">${money(loanAmt)}</td>
+        <td class="mono">${money(principal)}</td>
       `;
 
       let cells = "";
       for (const apr of aprs) {
         for (const term of terms) {
-          const emi = monthlyPayment(loanAmt, apr, term);
+          const emi = monthlyPayment(principal, apr, term);
           const allIn = emi + ins;
 
           const cls = cellClass(emi, maxEmi, allIn, maxAllIn);
+
+          // Needed cut to hit target EMI
+          const back = maxVehiclePriceForTarget(targetEmi, apr, term, down, taxRate, docFee, otherTaxable, regFee, otherNonTaxable);
+          const neededCut = Math.max(0, price - back.maxPrice);
+
           cells += `<td class="${cls} mono matrixCell" data-down="${down}" data-apr="${apr}" data-term="${term}">
                     ${money(emi)}<span class="small"> / ${money(allIn)}</span>
                   </td>`;
-
-          // Compute required cut to hit target
-          const back = maxVehiclePriceForTarget(targetEmi, apr, term, down, taxRate, docFee, otherTaxable, regFee, otherNonTaxable);
-          const neededCut = Math.max(0, price - back.maxPrice);
 
           allScenarioRows.push({
             down, apr, term,
             emi, allIn,
             neededCut,
-            maxPrice: back.maxPrice
+            maxPrice: back.maxPrice,
+            principal,
+            otd
           });
-
         }
       }
 
@@ -413,59 +493,9 @@
       body.appendChild(tr);
     }
 
-    // Choose default selected: prioritize within constraints, then closest to target EMI
+    // Default selected: prioritize within constraints, then closest to target
     if (allScenarioRows.length) {
-      const ranked = allScenarioRows
-        .slice()
-        .sort((a, b) => {
-          const aOk = (a.emi <= maxEmi) && (a.allIn <= maxAllIn);
-          const bOk = (b.emi <= maxEmi) && (b.allIn <= maxAllIn);
-          if (aOk !== bOk) return aOk ? -1 : 1;
-          const da = Math.abs(a.emi - targetEmi);
-          const db = Math.abs(b.emi - targetEmi);
-          if (da !== db) return da - db;
-          return a.neededCut - b.neededCut;
-        });
-      const best = ranked[0];
-      const loanAmtSel = Math.max(0, otd - best.down);
-      selected = {
-        down: best.down,
-        apr: best.apr,
-        term: best.term,
-        emi: best.emi,
-        allIn: best.allIn,
-        neededCut: best.neededCut,
-        maxPrice: best.maxPrice,
-        loanAmt: loanAmtSel
-      };
-    }
-
-    // Click handling for focus
-    [...body.querySelectorAll("td[data-down]")].forEach(td => {
-      td.addEventListener("click", () => {
-        const down = parseFloat(td.getAttribute("data-down"));
-        const apr = parseFloat(td.getAttribute("data-apr"));
-        const term = parseInt(td.getAttribute("data-term"), 10);
-
-        const loanAmt = Math.max(0, otd - down);
-        const emi = monthlyPayment(loanAmt, apr, term);
-        const allIn = emi + ins;
-
-        const back = maxVehiclePriceForTarget(targetEmi, apr, term, down, taxRate, docFee, otherTaxable, regFee, otherNonTaxable);
-        const neededCut = Math.max(0, price - back.maxPrice);
-
-        selected = { down, apr, term, emi, allIn, neededCut, maxPrice: back.maxPrice, loanAmt };
-        renderSelected(price, targetEmi, taxRate, docFee, otherTaxable, regFee, otherNonTaxable);
-      });
-    });
-
-    // Render initial selected + top fits
-    renderSelected(price, targetEmi, taxRate, docFee, otherTaxable, regFee, otherNonTaxable);
-
-    // Sort “top fits”: prioritize within max constraints, then closest to target EMI
-    const top = allScenarioRows
-      .slice()
-      .sort((a, b) => {
+      const ranked = allScenarioRows.slice().sort((a, b) => {
         const aOk = (a.emi <= maxEmi) && (a.allIn <= maxAllIn);
         const bOk = (b.emi <= maxEmi) && (b.allIn <= maxAllIn);
         if (aOk !== bOk) return aOk ? -1 : 1;
@@ -473,8 +503,54 @@
         const db = Math.abs(b.emi - targetEmi);
         if (da !== db) return da - db;
         return a.neededCut - b.neededCut;
-      })
-      .slice(0, 8);
+      });
+
+      const best = ranked[0];
+      SELECTED = {
+        down: best.down,
+        apr: best.apr,
+        term: best.term,
+        emi: best.emi,
+        allIn: best.allIn,
+        neededCut: best.neededCut,
+        maxPrice: best.maxPrice,
+        principal: best.principal,
+        otd: best.otd
+      };
+    }
+
+    // Click to select scenario
+    [...body.querySelectorAll("td[data-down]")].forEach(td => {
+      td.addEventListener("click", () => {
+        const down = parseFloat(td.getAttribute("data-down"));
+        const apr = parseFloat(td.getAttribute("data-apr"));
+        const term = parseInt(td.getAttribute("data-term"), 10);
+
+        const principal = Math.max(0, otd - down);
+        const emi = monthlyPayment(principal, apr, term);
+        const allIn = emi + ins;
+
+        const back = maxVehiclePriceForTarget(targetEmi, apr, term, down, taxRate, docFee, otherTaxable, regFee, otherNonTaxable);
+        const neededCut = Math.max(0, price - back.maxPrice);
+
+        SELECTED = { down, apr, term, emi, allIn, neededCut, maxPrice: back.maxPrice, principal, otd };
+        renderSelected(price, targetEmi, taxRate, docFee, otherTaxable, regFee, otherNonTaxable);
+      });
+    });
+
+    // Render selected + totals
+    renderSelected(price, targetEmi, taxRate, docFee, otherTaxable, regFee, otherNonTaxable);
+
+    // Top fits
+    const top = allScenarioRows.slice().sort((a, b) => {
+      const aOk = (a.emi <= maxEmi) && (a.allIn <= maxAllIn);
+      const bOk = (b.emi <= maxEmi) && (b.allIn <= maxAllIn);
+      if (aOk !== bOk) return aOk ? -1 : 1;
+      const da = Math.abs(a.emi - targetEmi);
+      const db = Math.abs(b.emi - targetEmi);
+      if (da !== db) return da - db;
+      return a.neededCut - b.neededCut;
+    }).slice(0, 8);
 
     const topFits = $("topFits");
     topFits.innerHTML = "";
@@ -491,7 +567,7 @@
       topFits.appendChild(tr);
     }
 
-    // Summary text for copying
+    // Summary text
     const summary =
 `Car: ${carName || "(not set)"} ${vin ? " | VIN: " + vin : ""}
 Inputs:
@@ -506,24 +582,16 @@ Budget:
 - Target EMI: ${money(targetEmi)} | Max EMI: ${money(maxEmi)}
 - Insurance/mo: ${money(ins)} | Max all-in: ${money(maxAllIn)}
 
+Selected scenario (Totals table uses THIS down payment):
+- Down ${money(SELECTED?.down ?? 0)} | APR ${(SELECTED?.apr ?? 0).toFixed(2)}% | Term ${SELECTED?.term ?? 0} mo
+- Principal (OTD - down): ${money(SELECTED?.principal ?? 0)} | EMI: ${money(SELECTED?.emi ?? 0)} | All-in: ${money(SELECTED?.allIn ?? 0)}
+
 Top fits (Down / APR / Term => EMI / All-in | Needed price cut):
 ${top.map(r => `- ${money(r.down)} / ${r.apr.toFixed(2)}% / ${r.term}mo => ${money(r.emi)} / ${money(r.allIn)} | cut ${money(r.neededCut)} (max price ~${money(r.maxPrice)})`).join("\n")}
 `;
     $("summaryText").value = summary;
-
-    function renderSelected(price, targetEmi, taxRate, docFee, otherTaxable, regFee, otherNonTaxable) {
-      if (!selected) return;
-      $("selScenario").textContent = `${money(selected.down)} down @ ${selected.apr.toFixed(2)}% for ${selected.term} months`;
-      $("selLoan").textContent = `Loan ≈ ${money(selected.loanAmt)} | EMI ≈ ${money(selected.emi)} | All-in ≈ ${money(selected.allIn)}`;
-      $("selCut").textContent = money(selected.neededCut);
-      $("selCutNote").textContent =
-        selected.neededCut > 0
-          ? `To hit target EMI ${money(targetEmi)} for this scenario, price must be ~${money(selected.maxPrice)} (before fees/tax inputs).`
-          : `This scenario already supports target EMI at current price & fees.`;
-    }
   }
 
-  // Copy summary to clipboard
   async function copySummary() {
     const text = $("summaryText").value;
     try {
@@ -531,7 +599,6 @@ ${top.map(r => `- ${money(r.down)} / ${r.apr.toFixed(2)}% / ${r.term}mo => ${mon
       $("copyBtn").textContent = "Copied";
       setTimeout(() => $("copyBtn").textContent = "Copy summary", 1000);
     } catch {
-      // fallback: select
       $("summaryText").focus();
       $("summaryText").select();
       document.execCommand("copy");
@@ -541,7 +608,6 @@ ${top.map(r => `- ${money(r.down)} / ${r.apr.toFixed(2)}% / ${r.term}mo => ${mon
   $("calcBtn").addEventListener("click", run);
   $("copyBtn").addEventListener("click", copySummary);
 
-  // initial run
   run();
 </script>
 </body>
